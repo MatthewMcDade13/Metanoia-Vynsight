@@ -1,106 +1,99 @@
 use std::fmt::Display;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
-use tokio::sync::{RwLock};
 
 use actix::prelude::*;
+use crate::common::{RwLockBucket, ActorBucket, Kill, DoneCrawl, PushTarget, PopTarget, SpawnCrawler};
 use crate::crawl::Crawler;
 
-pub struct Supervisor {
-    root: Addr<Spider>
+const DEFAULT_MAX_CRAWLERS: usize = 8;
+
+
+type TargetList = Vec<String>;
+pub struct SpiderSupervisor(TargetList);
+
+impl SpiderSupervisor {
+    // pub fn start_with(num_crawlers: usize) -> Self {
+    //     let addr: Addr<Self> = ...;
+    //     addr.
+    // }
 }
 
-impl Actor for Supervisor {
-    type Context = Context<Self>;
-}
-
-
-#[derive(Debug, Message)]
-#[rtype(result = "()")]
-pub struct Kill;
-
-type SpiderActorBucketRef = Arc<RwLock<Vec<Addr<Crawler>>>>;
-struct SpiderActorBucket(SpiderActorBucketRef);
-
-impl SpiderActorBucket {
-    fn as_ref(&self) -> SpiderActorBucketRef {
-        self.0.clone()
-    }
-}
-
-impl Default for SpiderActorBucket {
-    fn default() -> Self {
-        Self(Arc::new(RwLock::const_new(Vec::new())))
-    }
-}
-
-
-pub struct Spider {
-    starting_list: Option<Vec<String>>,
-    max_crawlers: u32,
-    max_crawler_bucket_size: u32,
-    actor_bucket: SpiderActorBucket,
-}
-
-impl Spider {
-   fn new(max_crawlers: u32, starting_list: Option<Vec<String>>) -> Self {
-    Self {
-        starting_list,
-        max_crawlers,
-        max_crawler_bucket_size: max_crawlers / 2,
-        actor_bucket: SpiderActorBucket::default()
-    }
-   }
-}
-
-impl Default for Spider {
-    fn default() -> Self {
-        Self {
-            starting_list: None,
-            max_crawlers: 8,
-            max_crawler_bucket_size: 4,
-            actor_bucket: SpiderActorBucket::default()
-        }
-    }
-}
-
-impl Actor for Spider {
+impl Actor for SpiderSupervisor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        if let Some(start_urls) = &self.starting_list {
-            let exec = async { 
-                 
-                let bucket_lock = self.actor_bucket.0.as_ref();
-                    {
-                        let mut cs = bucket_lock.write().await;
-                        for url in start_urls {
-                            let addr = Crawler::new(url).start();
-                            cs.push(addr);
-                        }
-                    } 
-
-            };
-        }
+        println!("Starting Spider: {:?}", ctx.address())
     }
 }
 
-
-// To use actor with supervisor actor has to implement `Supervised` trait
-impl actix::Supervised for Spider {
+impl actix::Supervised for SpiderSupervisor {
     fn restarting(&mut self, ctx: &mut Self::Context) {
-        
-        let addr = ctx.address();
-        println!("Restarting Actor thread: {:?}", addr)
+        println!("Restarting Spider Actor thread: {:?}", ctx.address())
     }
 }
 
-impl Handler<Kill> for Spider {
+impl Handler<DoneCrawl> for SpiderSupervisor {
     type Result = ();
 
-    fn handle(&mut self, _: Kill, ctx: &mut Context<Spider>) {
+    fn handle(&mut self, msg: DoneCrawl, ctx: &mut Self::Context) -> Self::Result {
+    }
+}
+
+
+impl Handler<Kill> for SpiderSupervisor {
+    type Result = ();
+
+    fn handle(&mut self, _: Kill, ctx: &mut Self::Context) {
         ctx.stop();
     }
 }
+
+
+impl Handler<SpawnCrawler> for SpiderSupervisor {
+    type Result = ();
+
+    fn handle(&mut self, _: SpawnCrawler, ctx: &mut Self::Context) {
+        
+    }
+}
+
+pub struct Spider {
+    master_target_list: Vec<String>,
+    runner: SystemRunner,
+    sup_handle: Addr<SpiderSupervisor>
+}
+
+impl Spider {
+
+   pub fn new(sys: SystemRunner, starting_list: Vec<String>) -> Self {
+        let master_target_list = &starting_list;
+        let sup_handle = {
+            let tl = starting_list.to_vec();
+            let fut = async { Supervisor::start(|_| SpiderSupervisor(tl)) };
+            sys.block_on(fut)
+        };
+        Self {
+            master_target_list: starting_list,
+            runner: sys,
+            sup_handle
+        }
+   }
+
+   pub fn start(&self) -> std::io::Result<()> {
+    self.runner.run()
+   }
+}
+
+// impl Default for Spider {
+//     fn default() -> Self {
+//         Self {
+//             target_list: Vec::new(),
+//             sup_handle: None
+//         }
+//     }
+// }
+
+
 
 

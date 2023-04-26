@@ -2,14 +2,24 @@ use std::fmt::Display;
 
 use actix::prelude::*;
 
+use crate::spider::SpiderSupervisor;
+
+
+
 #[derive(Message)]
-#[rtype(result = "std::io::Result<String>")]
+#[rtype(result = "()")]
 pub struct Crawl(String);
 
-pub struct Crawler {
-    uri: String
+impl Crawl {
+    pub const fn target(&self) -> &str { self.0.as_str() }
 }
 
+type ParentSpider = Addr<SpiderSupervisor>;
+pub struct Crawler(ParentSpider);
+
+impl Crawler {
+    pub const fn parent(&self) -> ParentSpider { self.0 }
+}
 
 impl Actor for Crawler {
     type Context = Context<Self>;
@@ -19,14 +29,9 @@ impl Actor for Crawler {
     }
 }
 
-impl Crawler {
-    pub fn new(uri: &str) -> Self {
-        Self { uri: uri.into() }
-    }
-}
 
 impl Handler<Crawl> for Crawler {
-    type Result = std::io::Result<String>;
+    type Result = ();
 
     fn handle(&mut self, msg: Crawl, ctx: &mut Self::Context) -> Self::Result {
         // Navigate to given URL

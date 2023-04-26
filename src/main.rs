@@ -13,6 +13,7 @@ mod db;
 mod spider;
 mod crawl;
 mod scrape;
+mod common;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
