@@ -1,64 +1,20 @@
 use std::sync::{Arc, RwLock};
 
 use actix::{Addr, Message};
+use serde::{Serialize, Deserialize};
 
-pub struct RwLockBucket<T: Clone>(Arc<RwLock<Vec<T>>>);
+use crate::crawl::{Crawler, CrawlError};
+use crate::spider_sup::{SpiderStatus};
 
-
-/// ```
-/// struct RwLockBucket<T>(Arc<RwLock<Vec<T>>>)
-/// ```
-pub type ActorBucket<T> = RwLockBucket<Addr<T>>; 
-
-impl<T: Clone> RwLockBucket<T> {
-    pub fn new(data: Vec<T>) -> Self {
-        Self(Arc::new(RwLock::new(data)))
-    }
-    
-    pub fn with_capacity(size: usize) -> Self {
-        let v = Vec::with_capacity(size);
-        Self::new(v)
-    }
-
-    pub fn len(&self) -> usize {
-        if let Ok(data) = self.0.read() {
-            data.len()
-        } else { 0 }
-    }
-
-    pub fn write_at(&mut self, val: T, index: usize) {
-        if let Ok(mut data) = self.0.as_ref().write() {            
-            if index < data.len() { 
-                data.insert(index, val) 
-            } 
-        }
-    }
-
-    pub fn write_pop(&mut self) -> Option<T> {
-        if let Ok(mut data) = self.0.as_ref().write() {
-            data.pop()
-        } else { None }
-    }
-
-    pub fn write_push(&mut self, val: T) {
-        if let Ok(mut data) = self.0.as_ref().write() {
-            data.push(val);
-        }
-    }
-
-    pub fn read(&self, index: usize) -> Option<T> {
-        if let Ok(data) = self.0.read() {
-            if let Some(x) = data.get(index) {
-                Some(x.clone())
-            } else { None }
-        } else { None }
-    }
- }
-
-impl<T: Clone> Default for RwLockBucket<T> {
-    fn default() -> Self {
-        Self(Arc::new(RwLock::new(Vec::new())))
-    }
+#[derive(Debug, Copy, Clone)]
+pub enum ConnectionErrorType {
+    HTTP,
+    HTTPS,
+    TLS,
+    FTP,
+    SFTP,
+    SSH,
+    WebSocket,
 }
 
 
@@ -66,17 +22,20 @@ impl<T: Clone> Default for RwLockBucket<T> {
 #[rtype(result = "()")]
 pub struct Kill;
 
-#[derive(Debug, Message)]
-#[rtype(result = "()")]
-pub struct PopTarget;
-
-#[derive(Debug, Message)]
-#[rtype(result = "()")]
-pub struct PushTarget(pub String);
-
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct DoneCrawl(pub String);
+pub struct DoneCrawl {
+    result: Result<Vec<String>, CrawlError>,
+    sender: Addr<Crawler>
+}
+
+impl DoneCrawl {
+    pub const fn result(&self) -> &Result<Vec<String>, CrawlError> { &self.result }
+    pub fn sender(&self) -> Addr<Crawler> { self.sender.clone() } 
+}
+// impl DoneCrawl {
+//     pub fn new()
+// }
 
 
 #[derive(Message)]
@@ -87,3 +46,31 @@ type TargetUri = String;
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Crawl(pub TargetUri);
+
+#[derive(Debug, Message)]
+#[rtype(result = "()")]
+pub struct SpiderDone(pub Vec<String>);
+
+
+#[derive(Debug, Message)]
+#[rtype(result = "SpiderStatus")]
+pub struct GetSpiderStatus;
+
+pub type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+
+pub fn into_cbor<'a, T: 'a>(value: &T)  -> DynResult<Vec<u8>>
+    where T: Serialize + Deserialize<'a> {
+        
+        let mut value_buffer: Vec<u8> = Vec::new();
+        ciborium::ser::into_writer(value, value_buffer.as_mut_slice())?;
+
+        Ok(value_buffer.clone())
+}
+
+pub fn from_cbor<'a, T: 'a>(cbor: &[u8]) -> DynResult<T> 
+    where T: Deserialize<'a> {
+
+    let value = ciborium::de::from_reader::<T, _>(cbor)?;
+    Ok(value)
+}
