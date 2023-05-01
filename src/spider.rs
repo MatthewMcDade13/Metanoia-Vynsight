@@ -12,7 +12,8 @@ use hyper::http::status;
 use serde::{Deserialize, Serialize};
 use crate::common::{Kill, DoneCrawl,SpawnCrawler, SpiderDone, GetSpiderStatus, into_cbor, from_cbor};
 use crate::crawl::{Crawler, Crawl};
-use crate::spider_sup::{SpiderSupervisor, SpiderStatus, SpiderFailure};
+use crate::error::spider::SpiderFailure;
+use crate::spider_sup::{SpiderSupervisor, SpiderStatus};
 
 
 

@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use std::io::Cursor;
 
 use actix::{Addr, Message};
 use serde::{Serialize, Deserialize};
@@ -63,7 +64,7 @@ pub fn into_cbor<'a, T: 'a>(value: &T)  -> DynResult<Vec<u8>>
     where T: Serialize + Deserialize<'a> {
         
         let mut value_buffer: Vec<u8> = Vec::new();
-        ciborium::ser::into_writer(value, value_buffer.as_mut_slice())?;
+        ciborium::ser::into_writer(value, &mut value_buffer)?;
 
         Ok(value_buffer.clone())
 }
@@ -71,6 +72,6 @@ pub fn into_cbor<'a, T: 'a>(value: &T)  -> DynResult<Vec<u8>>
 pub fn from_cbor<'a, T: 'a>(cbor: &[u8]) -> DynResult<T> 
     where T: Deserialize<'a> {
 
-    let value = ciborium::de::from_reader::<T, _>(cbor)?;
+    let value = ciborium::de::from_reader::<T, _>(Cursor::new(cbor))?;
     Ok(value)
 }

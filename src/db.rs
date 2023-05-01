@@ -1,9 +1,53 @@
-use std::{path::{PathBuf, Path}, fmt::Display};
+// use core::slice::SlicePattern;
+use std::{path::{PathBuf, Path}, fmt::{Display, Write}};
+use std::io::{Error, ErrorKind};
 
-use lmdb::{Environment, EnvironmentFlags, DatabaseFlags, WriteFlags, RoTransaction, RwTransaction, Transaction};
+use actix::{Actor, Context};
+use lmdb::{Environment, EnvironmentFlags, DatabaseFlags, WriteFlags, RoTransaction, RwTransaction, Transaction, Database};
 use serde::{Serialize, Deserialize};
 
-use crate::common::{DynResult, from_cbor, into_cbor};
+use crate::{common::{DynResult, from_cbor, into_cbor}, error::db::TransactionError};
+
+pub enum TransactionHandle<'a> {
+    Rw(RwTransaction<'a>),
+    Ro(RoTransaction<'a>),
+}
+
+
+impl<'a> TransactionHandle<'a> {
+    pub fn put(&mut self, db: &Database, key: &str, value: &[u8]) -> DynResult<()> {
+        match self {
+            TransactionHandle::Rw(txn) => {
+                txn.put(*db, &key.as_bytes(), &value, WriteFlags::empty())?;
+                Ok(())
+            },
+            TransactionHandle::Ro(_) => { 
+                let err = TransactionError("Tried to write to a ReadOnly Transaction".into());
+                Err(Box::new(err))
+             },
+        }
+    }
+
+    pub fn get(&self, db: &Database, key: &str) -> DynResult<&[u8]> {
+        match self {
+            TransactionHandle::Rw(txn) => {
+                let result = txn.get(*db, &key.as_bytes())?;
+                Ok(result)
+            },
+            TransactionHandle::Ro(txn) => {
+                let result = txn.get(*db, &key.as_bytes())?;
+                Ok(result)
+            },
+        }
+    }
+
+    pub fn commit(self) -> DynResult<()> {
+        match self {
+            TransactionHandle::Rw(txn) => { txn.commit()?; Ok(()) },
+            TransactionHandle::Ro(txn) => { txn.commit()?; Ok(()) },
+        }
+    }
+}
 
 pub struct MetaDB {
     
@@ -14,8 +58,15 @@ pub struct MetaDB {
 
  
 impl MetaDB {
+
+    const DB_DEFAULT_DIR: &'static str = "./data/";
+
     pub fn new(dbname: &str) -> lmdb::Result<Self> {
-        let mut db_path: PathBuf = PathBuf::from("./data/");
+        Self::with_dir(dbname, Self::DB_DEFAULT_DIR)
+    }
+
+    pub fn with_dir(dbname: &str, db_dir: &str) -> lmdb::Result<Self> {
+        let mut db_path: PathBuf = PathBuf::from(db_dir);
         db_path.push(dbname);
 
         let env = {
@@ -42,62 +93,63 @@ impl MetaDB {
         Ok(Self { env, db })
     }
 
-    pub fn begin_rw_txn(&mut self) -> DynResult<RwTransaction> {
-        self.begin_rw_txn()
+    pub fn begin_rw_txn(&self) -> DynResult<TransactionHandle> {
+        use TransactionHandle::Rw;
+        let txn = Rw(self.env.begin_rw_txn()?);
+        Ok(txn)
     }
 
-    pub fn end_rw_txn(txn: RwTransaction) -> DynResult<()> {
-        txn.commit()?;
-        Ok(())
+
+    pub fn begin_ro_txn(&self) -> DynResult<TransactionHandle> {
+        use TransactionHandle::Ro;
+        let txn = Ro(self.env.begin_ro_txn()?);
+        Ok(txn)
     }
 
-    pub fn txn_write<'a, T: 'a>(&mut self, txn: &mut RwTransaction, key: &str, value: &T) -> DynResult<()> 
+    pub fn txn_write<'a, T: 'a>(&self, txn: &mut TransactionHandle, key: &str, value: &T) -> DynResult<()> 
      where T: Serialize + Deserialize<'a> {
-
-        Ok(())
-    }
-
-    pub fn write<'a, T: 'a>(&mut self, key: &str, value: &T) -> Result<(), Box<dyn std::error::Error>>
-        where T: Serialize + Deserialize<'a> {
-        let mut txn = self.env.begin_rw_txn()?;
         let value_buffer = into_cbor(value)?;
         let value_buffer = value_buffer.as_slice();
 
-        let key = key.as_bytes();
-        txn.put(self.db, &key, &value_buffer, WriteFlags::empty())?;
-        Transaction::commit(txn)?;
-
+        txn.put(&self.db, key, &value_buffer)?;
         Ok(())
     }
 
-    // pub fn write_many<'a, T: 'a>(&mut self, vals: &Vec<(String, T)>) -> DynResult<()>
-    //     where T: Serialize + Deserialize<'a> {
-    //         let mut txn = self.env.begin_rw_txn()?;
-            
-    //     }
+    pub fn txn_read<'a, T: 'a>(&self, txn: &TransactionHandle, key: &str) -> DynResult<T> 
+     where T: Serialize + Deserialize<'a> {
+        let value_bytes = txn.get(&self.db, key)?;
 
-    pub fn read<'a, T: 'a>(&self, key: &str) -> Result<T, Box<dyn std::error::Error>>
-        where T: Deserialize<'a> {
+        let value = from_cbor::<T>(value_bytes)?;
 
-        let txn = self.env.begin_ro_txn()?;
-        let value_bytes = txn.get(self.db, &key.as_bytes())?;
+        Ok(value)
+    }
+
+    pub fn write<'a, T: 'a>(&self, key: &str, value: &T) -> Result<(), Box<dyn std::error::Error>>
+        where T: Serialize + Deserialize<'a> {
+        
+        let mut txn = self.begin_rw_txn()?;
+        self.txn_write(&mut txn, key, value)?;
+        txn.commit()?;
+
+        Ok(())/*  */
+    }
+
+    pub fn read<'b, T: 'b>(&self, key: &str) -> Result<T, Box<dyn std::error::Error>>
+        where T: Deserialize<'b> {
+
+        let txn = self.begin_ro_txn()?;
+        let value_bytes = self.txn_read(&txn, key)?;
+        txn.commit()?;
 
         let value = from_cbor(value_bytes)?;
 
-        txn.commit()?;
         Ok(value)
     }
     
 }
 
-type Reason = String;
-#[derive(Debug)]
-pub struct DBSerializeError(pub Reason);
+impl Actor for MetaDB where Self: Sized + Unpin + 'static {
+    type Context = Context<Self>;
 
-impl Display for DBSerializeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
 }
 
-impl std::error::Error for DBSerializeError {}
