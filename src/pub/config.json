@@ -1,0 +1,10 @@
+{
+    "target_file": "./src/pub/targets.json",
+    "targets": {
+        "search_term": "*",
+        "uris": []
+    },
+    "num_crawlers": 8,
+    "poll_interval_millisec": 1000
+}
+

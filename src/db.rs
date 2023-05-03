@@ -124,7 +124,7 @@ impl MetaDB {
         Ok(value)
     }
 
-    pub fn write<'a, T: 'a>(&self, key: &str, value: &T) -> Result<(), Box<dyn std::error::Error>>
+    pub fn write<'a, T: 'a>(&self, key: &str, value: &T) -> DynResult<()>
         where T: Serialize + Deserialize<'a> {
         
         let mut txn = self.begin_rw_txn()?;
@@ -134,7 +134,7 @@ impl MetaDB {
         Ok(())/*  */
     }
 
-    pub fn read<'b, T: 'b>(&self, key: &str) -> Result<T, Box<dyn std::error::Error>>
+    pub fn read<'b, T: 'b>(&self, key: &str) -> DynResult<T>
         where T: Deserialize<'b> {
 
         let txn = self.begin_ro_txn()?;

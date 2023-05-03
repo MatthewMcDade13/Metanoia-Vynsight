@@ -3,17 +3,22 @@ extern crate hyper;
 extern crate hyper_tls;
 extern crate actix;
 extern crate ciborium;
+extern crate scraper;
+extern crate clap;
+extern crate serde_json;
 
-use common::{into_cbor, from_cbor};
+
+use common::{into_cbor, from_cbor, CrawlResult};
 use error::spider::SpiderFailure;
 use hyper::{Client, Uri};
 use hyper_tls::HttpsConnector;
 use serde::{Serialize, Deserialize};
 use spider_sup::{SpiderStatus};
 use std::error::Error;
+use clap::{command, arg};
 use actix::prelude::*;
 
-use crate::spider::{Spider};
+use crate::spider::{Spider, SpiderConfig};
 
 
 mod db;
@@ -27,22 +32,46 @@ mod web;
 
 type MainResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+const DEFAULT_CONFIG_PATH: &'static str = "./src/pub/config.json";
 
 #[actix::main]
 async fn main() -> MainResult<()> {
 
-    let spider = Spider::new(vec!["".into()]);
-    let spider_result = spider.run().await;    
-    
-    match &spider_result {
-        Ok(new_targets) => exit_on_ok(new_targets),
-        Err(err) => exit_on_err(err),
+    let args = command!()
+        .arg(arg!(--config <PATH>).required(true).default_value(DEFAULT_CONFIG_PATH))
+        .get_matches();
+        // .arg(arg!(--blind).required_unless_present("config"))
+        // .arg(arg!(--search <TERM>).required_unless_present_any(["config", "blind"]))
+        // .arg(arg!(--targets <FILEPATH>).required_unless_present_any(["config", "db"]))
+        // .arg(arg!(--db).required_unless_present_any(["targets", "config"]))
+        // .arg(arg!(--single).required_unless_present("config"))
+        // .get_matches();
+
+    if let Some(cfg_path) = args.get_one::<String>("config") {
+
+        let config = json_from_file!(SpiderConfig, cfg_path)?;
+        let spider_result = run_spider(&config).await?;
+
+        exit_on_ok(&spider_result)
+    } else {
+        // Bail, we dont have any input
+        exit_on_err(&SpiderFailure("No input provided for Crawling".into()))
     }
+
+
+   
     
 }
 
+async fn run_spider(config: &SpiderConfig) -> MainResult<Vec<CrawlResult>> {
+    let targets = config.targets.uris().to_vec();
+    let spider = Spider::new(&targets);
+    let spider_result = spider.run().await?;    
+    
+    Ok(spider_result)
+}
 
-fn exit_on_ok(new_targets: &Vec<String>) -> MainResult<()> {
+fn exit_on_ok(new_targets: &Vec<CrawlResult>) -> MainResult<()> {
     // TODO :: Save new_targets to DB / Text file for next run.
     println!("Success! new_targets = {:?}", new_targets);
     Ok(())

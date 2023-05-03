@@ -8,10 +8,9 @@ use std::task::Poll;
 use actix::dev::{MessageResponse, OneshotSender};
 use actix::prelude::*;
 use hyper::http::status;
-use crate::common::{ Kill, DoneCrawl,SpawnCrawler, SpiderDone, GetSpiderStatus};
+use crate::common::{ Kill, DoneCrawl,SpawnCrawler, SpiderDone, GetSpiderStatus, CrawlResult};
 use crate::crawl::{Crawler, Crawl};
-
-const DEFAULT_NUM_CRAWLERS: usize = 8;
+use crate::spider::Spider;
 
 struct CrawlerQueue {
     idle: Vec<Addr<Crawler>>,
@@ -44,10 +43,12 @@ impl Default for CrawlerQueue {
 type TargetList = Vec<String>;
 pub struct SpiderSupervisor {
     targets: Vec<String>,
-    targets_vistited: HashSet<String>,
+    targets_vistited: HashSet<String>, 
+    results: Vec<CrawlResult>,
     crawlers: CrawlerQueue,
     num_crawlers: usize,
-    status: SpiderStatus
+    status: SpiderStatus,
+    search_term: Option<String>,
     // addr: Addr<Self>,
 }
 
@@ -56,9 +57,11 @@ impl Default for SpiderSupervisor {
         Self {
             targets: Vec::new(),
             targets_vistited: HashSet::new(),
-            crawlers: CrawlerQueue::with_capacity(DEFAULT_NUM_CRAWLERS),
-            num_crawlers: DEFAULT_NUM_CRAWLERS,
-            status: SpiderStatus::PendingStart
+            crawlers: CrawlerQueue::with_capacity(Spider::DEFAULT_NUM_CRAWLERS),
+            num_crawlers: Spider::DEFAULT_NUM_CRAWLERS,
+            status: SpiderStatus::PendingStart,
+            search_term: None,
+            results: Vec::new()
         }
     }
 }
@@ -67,18 +70,50 @@ impl SpiderSupervisor {
     pub const fn targets(&self) -> &TargetList { &self.targets }
     pub const fn ncrawlers(&self) -> usize { self.num_crawlers }
 
-    pub fn new(targets: Vec<String>) -> Self {
-        Self::with_ncrawlers(targets, DEFAULT_NUM_CRAWLERS)
+    pub fn new(targets: &Vec<String>) -> Self {
+        Self::with_ncrawlers(targets, Spider::DEFAULT_NUM_CRAWLERS)
     }
 
-    pub fn with_ncrawlers(targets: Vec<String>, num_crawlers: usize) -> Self {
+    pub fn with_ncrawlers(targets: &Vec<String>, num_crawlers: usize) -> Self {
         let ntargets = targets.len();
         Self {
-            targets,
+            targets: targets.to_vec(),
             targets_vistited: HashSet::with_capacity(ntargets),
             crawlers: CrawlerQueue::with_capacity(num_crawlers),
             num_crawlers,
-            status: SpiderStatus::PendingStart
+            status: SpiderStatus::PendingStart,
+            search_term: None,
+            results: Vec::new()
+        }
+    }
+
+    pub fn with_search(targets: &Vec<String>, num_crawlers: usize, term: &str) -> Self {
+        let mut inst = Self::with_ncrawlers(targets, num_crawlers);
+        inst.search_term = Some(term.to_string());
+        inst
+    }
+
+    fn setup_once(&mut self, ctx: &mut Context<SpiderSupervisor>) {
+        println!("Started SpiderSupervisor {:?}", ctx.address());
+
+        self.status = SpiderStatus::Running;
+
+        let addr = ctx.address();
+        let n_crawlers = self.num_crawlers;
+
+        for _ in 0..n_crawlers {
+            let parent = addr.clone();
+            let crawler = Crawler::new(parent.clone()).start();//Supervisor::start(move |_| Crawler::new(parent.clone()));
+
+            if let Some(uri) = &self.targets.pop() {
+
+                crawler.do_send(Crawl(uri.to_string()));
+                self.crawlers.active.insert(crawler, uri.to_string());             
+
+            } else {
+                self.crawlers.idle.push(crawler);
+            }
+
         }
     }
 }
@@ -98,12 +133,14 @@ impl Handler<DoneCrawl> for SpiderSupervisor {
     fn handle(&mut self, msg: DoneCrawl, ctx: &mut Self::Context) -> Self::Result {
         let crawl_result = msg.result();
         match crawl_result {
-            Ok(uris) => {
-                for uri in uris {
+            Ok(target) => {
+                for uri in target.child_links() {
                     if !self.targets_vistited.contains(uri) {
                         self.targets.push(uri.clone());
                     }
                 }
+
+                self.results.push(CrawlResult(target.uri().to_string(), target.clone()))
             },
             Err(err) => {
                 println!("Error Crawling URL: {}, Error: {:?}", err.at_uri(), err.info())
@@ -119,13 +156,13 @@ impl Handler<DoneCrawl> for SpiderSupervisor {
                     crawler.do_send(Crawl(target_uri.to_string()))
                 } else { 
                     if self.crawlers.active.len() == 0 {
-                        ctx.notify(SpiderDone(self.targets.to_vec()));
+                        ctx.notify(SpiderDone(self.results.to_vec()));
                     }
                 }
             }
 
         } else if self.crawlers.active.len() == 0 {
-            ctx.notify(SpiderDone(self.targets.to_vec()));
+            ctx.notify(SpiderDone(self.results.to_vec()));
         } else {            
             self.crawlers.active.remove(&sender);
             self.crawlers.idle.push(sender.clone());
@@ -166,39 +203,22 @@ impl Actor for SpiderSupervisor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        if self.status != SpiderStatus::PendingStart { 
-            println!("SpiderSupervisor::started() called & SpiderSupervisor::SpiderStatus != SpiderStatus::PendingStart. We are probably restarting. aborting started()"); 
-            return; 
-        }
 
-        println!("Started SpiderSupervisor {:?}", ctx.address());
-
-        self.status = SpiderStatus::Running;
-
-        let addr = ctx.address();
-        let n_crawlers = self.num_crawlers;
-
-        for _ in 0..n_crawlers {
-            let parent = addr.clone();
-            let crawler = Crawler::new(parent.clone()).start();//Supervisor::start(move |_| Crawler::new(parent.clone()));
-
-            if let Some(uri) = &self.targets.pop() {
-
-                crawler.do_send(Crawl(uri.to_string()));
-                self.crawlers.active.insert(crawler, uri.to_string());             
-
-            } else {
-                self.crawlers.idle.push(crawler);
+        // Dont need to setup if we already have before
+        match self.status {
+            SpiderStatus::PendingStart => self.setup_once(ctx),
+            _ => {
+                println!("SpiderSupervisor::started() called & SpiderSupervisor::SpiderStatus != SpiderStatus::PendingStart. We are probably restarting. aborting started()");
             }
-
         }
+
     }
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum SpiderStatus {
-    Running, Done(Vec<String>), Failed(String), PendingStart
+    Running, Done(Vec<CrawlResult>), Failed(String), PendingStart
 }
 
 impl<A, M> MessageResponse<A, M> for SpiderStatus 
