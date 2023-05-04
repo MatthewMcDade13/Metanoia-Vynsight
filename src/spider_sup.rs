@@ -49,7 +49,6 @@ pub struct SpiderSupervisor {
     num_crawlers: usize,
     status: SpiderStatus,
     search_term: Option<String>,
-    // addr: Addr<Self>,
 }
 
 impl Default for SpiderSupervisor {
@@ -66,6 +65,7 @@ impl Default for SpiderSupervisor {
     }
 }
 
+#[allow(dead_code)]
 impl SpiderSupervisor {
     pub const fn targets(&self) -> &TargetList { &self.targets }
     pub const fn ncrawlers(&self) -> usize { self.num_crawlers }
@@ -103,7 +103,7 @@ impl SpiderSupervisor {
 
         for _ in 0..n_crawlers {
             let parent = addr.clone();
-            let crawler = Crawler::new(parent.clone()).start();//Supervisor::start(move |_| Crawler::new(parent.clone()));
+            let crawler = Crawler::new(parent.clone()).start();
 
             if let Some(uri) = &self.targets.pop() {
 
@@ -131,7 +131,7 @@ impl Handler<DoneCrawl> for SpiderSupervisor {
     type Result = ();
 
     fn handle(&mut self, msg: DoneCrawl, ctx: &mut Self::Context) -> Self::Result {
-        let crawl_result = msg.result();
+        let crawl_result = msg.result.as_ref();
         match crawl_result {
             Ok(target) => {
                 for uri in target.child_links() {
@@ -139,15 +139,21 @@ impl Handler<DoneCrawl> for SpiderSupervisor {
                         self.targets.push(uri.clone());
                     }
                 }
+            
+                use hyper::http::Uri;
 
-                self.results.push(CrawlResult(target.uri().to_string(), target.clone()))
+                let target_url: Uri = target.uri()
+                    .parse()
+                    .unwrap();
+                self.results.push(CrawlResult(target_url, target.clone()))
+                
             },
             Err(err) => {
                 println!("Error Crawling URL: {}, Error: {:?}", err.at_uri(), err.info())
             }
         }
 
-        let sender = msg.sender();
+        let sender = msg.sender.clone();
         if self.targets.len() > 0 {
             
             while let Some(crawler) = &self.crawlers.idle.pop() {
@@ -175,7 +181,6 @@ impl Handler<SpiderDone> for SpiderSupervisor {
     type Result = ();
 
     fn handle(&mut self, msg: SpiderDone, ctx: &mut Self::Context) {
-        let addr = ctx.address();
         let SpiderDone(targets) = msg;
         self.status = SpiderStatus::Done(targets.to_vec());
     }
@@ -192,7 +197,7 @@ impl Handler<Kill> for SpiderSupervisor {
 impl Handler<GetSpiderStatus> for SpiderSupervisor {
     type Result = SpiderStatus;
 
-    fn handle(&mut self, _: GetSpiderStatus, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _: GetSpiderStatus, _: &mut Self::Context) -> Self::Result {
         self.status.clone()
     }
 }
@@ -226,7 +231,7 @@ where
     A: Actor,
     M: Message<Result = Self>, 
 {
-    fn handle(self, ctx: &mut A::Context, tx: Option<OneshotSender<M::Result>>) {
+    fn handle(self, _: &mut A::Context, tx: Option<OneshotSender<M::Result>>) {
         if let Some(tx) = tx {
             let _ = tx.send(self);
         }

@@ -1,12 +1,11 @@
 // use core::slice::SlicePattern;
-use std::{path::{PathBuf, Path}, fmt::{Display, Write}};
-use std::io::{Error, ErrorKind};
+use std::{path::{PathBuf}};
 
 use actix::{Actor, Context};
 use lmdb::{Environment, EnvironmentFlags, DatabaseFlags, WriteFlags, RoTransaction, RwTransaction, Transaction, Database};
 use serde::{Serialize, Deserialize};
 
-use crate::{common::{DynResult, from_cbor, into_cbor}, error::db::TransactionError};
+use crate::{common::{DynResult, ser::{into_cbor, from_cbor}}, error::db::TransactionError};
 
 pub enum TransactionHandle<'a> {
     Rw(RwTransaction<'a>),
@@ -56,10 +55,10 @@ pub struct MetaDB {
 
 }
 
- 
+
 impl MetaDB {
 
-    const DB_DEFAULT_DIR: &'static str = "./data/";
+    const DB_DEFAULT_DIR: &'static str = "./src/data/";
 
     pub fn new(dbname: &str) -> lmdb::Result<Self> {
         Self::with_dir(dbname, Self::DB_DEFAULT_DIR)
@@ -82,7 +81,7 @@ impl MetaDB {
         };
 
         let db = {
-            let db_result = env.create_db(None, DatabaseFlags::default());
+            let db_result = env.create_db(None, DatabaseFlags::DUP_SORT);
 
             match db_result {
                 Ok(db) => db,
@@ -131,7 +130,7 @@ impl MetaDB {
         self.txn_write(&mut txn, key, value)?;
         txn.commit()?;
 
-        Ok(())/*  */
+        Ok(())
     }
 
     pub fn read<'b, T: 'b>(&self, key: &str) -> DynResult<T>

@@ -8,7 +8,7 @@ extern crate clap;
 extern crate serde_json;
 
 
-use common::{into_cbor, from_cbor, CrawlResult};
+use common::{ser::{into_cbor, from_cbor}, CrawlResult};
 use error::spider::SpiderFailure;
 use hyper::{Client, Uri};
 use hyper_tls::HttpsConnector;
@@ -38,7 +38,7 @@ const DEFAULT_CONFIG_PATH: &'static str = "./src/pub/config.json";
 async fn main() -> MainResult<()> {
 
     let args = command!()
-        .arg(arg!(--config <PATH>).required(true).default_value(DEFAULT_CONFIG_PATH))
+        .arg(arg!(--config <PATH>).required(false).default_value(DEFAULT_CONFIG_PATH))
         .get_matches();
         // .arg(arg!(--blind).required_unless_present("config"))
         // .arg(arg!(--search <TERM>).required_unless_present_any(["config", "blind"]))
@@ -49,7 +49,8 @@ async fn main() -> MainResult<()> {
 
     if let Some(cfg_path) = args.get_one::<String>("config") {
 
-        let config = json_from_file!(SpiderConfig, cfg_path)?;
+        let config = get_config(cfg_path)?;
+
         let spider_result = run_spider(&config).await?;
 
         exit_on_ok(&spider_result)
@@ -61,6 +62,15 @@ async fn main() -> MainResult<()> {
 
    
     
+}
+
+fn get_config(cfg_path: &str) -> MainResult<SpiderConfig> {
+    let mut config = json_from_file!(SpiderConfig, cfg_path)?;
+    let tfopt = config.target_file.clone();
+    if let Some(targets_file) = tfopt.as_deref() {
+        let _ = config.populate_targets_from_file(targets_file)?;
+    }
+    Ok(config)
 }
 
 async fn run_spider(config: &SpiderConfig) -> MainResult<Vec<CrawlResult>> {
