@@ -4,8 +4,8 @@ use actix::{Addr, Message};
 use serde::{Serialize, Deserialize};
 use crate::crawl::{Crawler};
 use crate::error::spider::CrawlError;
+use crate::web::Target;
 use crate::spider_sup::{SpiderStatus};
-use crate::web::{Target};
 
 #[macro_export]
 macro_rules! json_from_file {

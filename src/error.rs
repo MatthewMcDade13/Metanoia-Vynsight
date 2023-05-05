@@ -18,7 +18,7 @@ pub mod spider {
 
     #[derive(Debug, Clone)]
     pub enum CrawlErrorInfo {
-        Connection(ConnectionErrorType, Reason),
+        Connection(Reason),
         Parse(Reason)
     }
 
@@ -29,21 +29,20 @@ pub mod spider {
     }
 
     impl CrawlError {
+        pub fn new(uri: String, info: CrawlErrorInfo) -> Self {
+            Self { uri, info }
+        }
         pub fn at_uri(&self) -> &str { self.uri.as_str() }
         pub const fn info(&self) -> &CrawlErrorInfo { &self.info }
     }
-
-
-    #[derive(Debug, Clone)]
-    pub enum ConnectionErrorType {
-        HTTP,
-        HTTPS,
-        TLS,
-        FTP,
-        SFTP,
-        SSH,
-        WebSocket,
+    impl Display for CrawlError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self)
+        }
     }
+
+    impl std::error::Error for CrawlError {}
+
 
 }
 

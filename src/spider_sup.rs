@@ -9,8 +9,9 @@ use actix::dev::{MessageResponse, OneshotSender};
 use actix::prelude::*;
 use hyper::http::status;
 use crate::common::{ Kill, DoneCrawl,SpawnCrawler, SpiderDone, GetSpiderStatus, CrawlResult};
-use crate::crawl::{Crawler, Crawl};
+use crate::crawl::{Crawler, Crawl, do_send_crawl};
 use crate::spider::Spider;
+use crate::web::is_valid_uri_scheme;
 
 struct CrawlerQueue {
     idle: Vec<Addr<Crawler>>,
@@ -106,9 +107,13 @@ impl SpiderSupervisor {
             let crawler = Crawler::new(parent.clone()).start();
 
             if let Some(uri) = &self.targets.pop() {
-
-                crawler.do_send(Crawl(uri.to_string()));
-                self.crawlers.active.insert(crawler, uri.to_string());             
+                if do_send_crawl(crawler.clone(), uri) {
+                    self.crawlers.active.insert(crawler, uri.to_string());
+                } else {
+                    self.crawlers.idle.push(crawler);
+                }
+                
+                   
 
             } else {
                 self.crawlers.idle.push(crawler);
@@ -134,7 +139,9 @@ impl Handler<DoneCrawl> for SpiderSupervisor {
         let crawl_result = msg.result.as_ref();
         match crawl_result {
             Ok(target) => {
-                for uri in target.child_links() {
+                self.targets_vistited.insert(target.uri.clone());
+                println!("Done Crawling URL: {}, Links Scraped: {:?}", target.uri, target.child_links);
+                for uri in target.child_links.iter() {
                     if !self.targets_vistited.contains(uri) {
                         self.targets.push(uri.clone());
                     }
@@ -142,24 +149,27 @@ impl Handler<DoneCrawl> for SpiderSupervisor {
             
                 use hyper::http::Uri;
 
-                let target_url: Uri = target.uri()
+                let target_url: Uri = target.uri
                     .parse()
                     .unwrap();
-                self.results.push(CrawlResult(target_url, target.clone()))
+                self.results.push(CrawlResult(target_url, target.clone()));
                 
             },
             Err(err) => {
                 println!("Error Crawling URL: {}, Error: {:?}", err.at_uri(), err.info())
             }
-        }
+        };
 
         let sender = msg.sender.clone();
         if self.targets.len() > 0 {
             
             while let Some(crawler) = &self.crawlers.idle.pop() {
                 if let Some(target_uri) = &self.targets.pop() {
-                    self.crawlers.active.insert(crawler.clone(), target_uri.to_string());
-                    crawler.do_send(Crawl(target_uri.to_string()))
+                    if do_send_crawl(crawler.clone(), &target_uri) {                        
+                        self.crawlers.active.insert(crawler.clone(), target_uri.to_string());
+                    } else {
+                        self.crawlers.idle.push(crawler.clone());
+                    }
                 } else { 
                     if self.crawlers.active.len() == 0 {
                         ctx.notify(SpiderDone(self.results.to_vec()));

@@ -4,8 +4,12 @@ use futures_util::TryFutureExt;
 use hyper::{http::response, Uri};
 use hyper::{body::HttpBody as _, Client};
 use hyper_tls::HttpsConnector;
+use scraper::{Html, Selector};
 
-use crate::{spider_sup::SpiderSupervisor, common::{HyperClient, DoneCrawl, DynResult}, web::Target};
+use crate::error::spider::{CrawlError, CrawlErrorInfo};
+use crate::scrape::WebScraper;
+use crate::web::{Target, GenWebScraper, is_valid_uri_scheme};
+use crate::{spider_sup::SpiderSupervisor, common::{HyperClient, DoneCrawl, DynResult}};
 
 
 
@@ -39,19 +43,19 @@ impl Handler<Crawl> for Crawler {
 
     fn handle(&mut self, msg: Crawl, ctx: &mut Self::Context) -> Self::Result {
         let url = &msg.0;
-
         let uri: Uri = url.parse().unwrap();
         let sender = ctx.address().clone();
         let parent = self.parent.clone();
         let client = self.http_client.clone();
 
         Arbiter::current().spawn(async move {
-
+            println!("Crawling {}", uri.to_string());
+            // TODO :: get_target_body panics on Timeout or bad connection. FIX DIS ISH BOII
             let body = get_target_body(&client, &uri).await.unwrap();
-            let child_links = parse_target_body(&body);
+            let target_result = parse_target_body(&body);
 
             parent.do_send(DoneCrawl {
-                result: Ok(Target::new(uri.to_string(), body, child_links, None)),
+                result: Ok(Target { uri: uri.to_string(), ..target_result }),
                 sender
             });
         });
@@ -69,33 +73,43 @@ impl Crawler {
     pub fn parent(&self) -> Addr<SpiderSupervisor> { self.parent.clone() }
 }
 
-fn parse_target_body(body: &str) -> Vec<String> {
-    todo!()
+fn parse_target_body(body: &str) -> Target {
+    let scraper = GenWebScraper::new(body);
+    scraper.scrape()
+    //     if let Some(link) = link.value().attr("href") {
+            
+    //     }
+    //     let href = link.value().attr("href").unwrap();
+    // }
+
 }
 
 async fn get_target_body(client: &HyperClient, uri: &Uri) -> DynResult<String> {
-    /*
-        let client = Client::new()?;
-        let uri = Uri::from_static("https://stackoverflow.com/questions/16902869/best-way-to-parse-an-int-in-javascript");
-        let response = client.get(uri).await?;
-        let body = response.text().await?;
-        let document = Html::parse_document(&body);
-        let selector = Selector::parse("a").unwrap();
-        for element in document.select(&selector) {
-            if let Some(href) = element.value().attr("href") {
-                println!("{}", href);
-            }
-        }
-        Ok(())
-     */
 
-    let mut response = client.get(uri.clone()).await?;
-    let mut buf = String::new();
+    let mut response_result = client.get(uri.clone()).await;
+    match response_result.as_mut() {
+        Ok(response) => {
+            let mut buf = String::new();
+        
+            while let Some(next) = response.data().await {
+                let chunk = next?;
+                buf.push_str(&String::from_utf8_lossy(&chunk));
+            };
+            
+            Ok(buf)
+        },
+        Err(err) => {
+            let err = CrawlError::new(uri.to_string(), CrawlErrorInfo::Connection(format!("{:?}", err)));
+            Err(Box::new(err))
+        },
+    }
 
-    while let Some(next) = response.data().await {
-        let chunk = next?;
-        buf.push_str(&String::from_utf8_lossy(&chunk));
-    };
 
-    Ok(buf)
+}
+
+pub fn do_send_crawl(to_crawler: Addr<Crawler>, url: &str) -> bool {
+    if is_valid_uri_scheme(url) {
+        to_crawler.do_send(Crawl(url.to_string()));
+        true
+    } else { false }
 }
