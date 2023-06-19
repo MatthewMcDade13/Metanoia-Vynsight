@@ -11,7 +11,7 @@ use actix::dev::{MessageResponse, OneshotSender};
 use actix::prelude::*;
 use hyper::http::status;
 use serde::{Deserialize, Serialize};
-use crate::common::{Kill, DoneCrawl,SpawnCrawler, SpiderDone, GetSpiderStatus, ser::{into_cbor, from_cbor, from_json}, DynResult, CrawlResult};
+use crate::common::{Kill, DoneCrawl,SpawnCrawler, SpiderDone, GetSpiderStatus, ser::{into_json, from_json}, DynResult, CrawlResult};
 use crate::crawl::{Crawler, Crawl};
 use crate::error::spider::SpiderFailure;
 use crate::json_from_file;

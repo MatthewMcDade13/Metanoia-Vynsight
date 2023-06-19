@@ -3,9 +3,9 @@ use std::{path::{PathBuf}};
 
 use actix::{Actor, Context};
 use lmdb::{Environment, EnvironmentFlags, DatabaseFlags, WriteFlags, RoTransaction, RwTransaction, Transaction, Database};
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use crate::{common::{DynResult, ser::{into_cbor, from_cbor}}, error::db::TransactionError};
+use crate::{common::{DynResult, ser::{into_json, from_json}}, error::db::TransactionError};
 
 pub enum TransactionHandle<'a> {
     Rw(RwTransaction<'a>),
@@ -107,21 +107,22 @@ impl MetaDB {
 
     pub fn txn_write<'a, T: 'a>(&self, txn: &mut TransactionHandle, key: &str, value: &T) -> DynResult<()> 
      where T: Serialize + Deserialize<'a> {
-        let value_buffer = into_cbor(value)?;
-        let value_buffer = value_buffer.as_slice();
+        let value_buffer = into_json(value)?;
+        let value_buffer = value_buffer.as_bytes();
 
         txn.put(&self.db, key, &value_buffer)?;
         Ok(())
     }
 
-    pub fn txn_read<'a, T: 'a>(&self, txn: &TransactionHandle, key: &str) -> DynResult<T> 
-     where T: Serialize + Deserialize<'a> {
-        let value_bytes = txn.get(&self.db, key)?;
+    // pub fn txn_read<'a, T>(&self, txn: &TransactionHandle, key: &str) -> DynResult<T> 
+    //  where T: Serialize + for<'b> Deserialize<'b> + Deserialize<'a> {
+    //     let value_bytes = txn.get(&self.db, key)?;
+    //     let value_s = String::from_utf8(value_bytes.to_vec().to_owned())?;
 
-        let value = from_cbor::<T>(value_bytes)?;
+    //     let value = from_json::<T>(&value_s)?;
 
-        Ok(value)
-    }
+    //     Ok(value)
+    // }
 
     pub fn write<'a, T: 'a>(&self, key: &str, value: &T) -> DynResult<()>
         where T: Serialize + Deserialize<'a> {
@@ -133,17 +134,17 @@ impl MetaDB {
         Ok(())
     }
 
-    pub fn read<'b, T: 'b>(&self, key: &str) -> DynResult<T>
-        where T: Deserialize<'b> {
+    // pub fn read<T>(&self, key: &str) -> DynResult<T>
+    //     where T: DeserializeOwned {
 
-        let txn = self.begin_ro_txn()?;
-        let value_bytes = self.txn_read(&txn, key)?;
-        txn.commit()?;
+    //     let txn = self.begin_ro_txn()?;
+    //     let value_bytes = self.txn_read(&txn, key)?;
+    //     txn.commit()?;/*  */
 
-        let value = from_cbor(value_bytes)?;
+    //     let value = from_json(value_bytes)?;
 
-        Ok(value)
-    }
+    //     Ok(value)
+    // }
     
 }
 

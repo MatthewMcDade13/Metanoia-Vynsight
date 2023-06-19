@@ -8,7 +8,7 @@ extern crate clap;
 extern crate serde_json;
 
 
-use common::{ser::{into_cbor, from_cbor}, CrawlResult};
+use common::{ser::{into_json, from_json}, CrawlResult};
 use error::spider::SpiderFailure;
 use hyper::{Client, Uri};
 use hyper_tls::HttpsConnector;

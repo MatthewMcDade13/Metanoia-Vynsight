@@ -68,22 +68,6 @@ pub type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub mod ser {
     use super::*;
 
-    pub fn into_cbor<'a, T: 'a>(value: &T)  -> DynResult<Vec<u8>>
-        where T: Serialize + Deserialize<'a> {
-            
-            let mut value_buffer: Vec<u8> = Vec::new();
-            ciborium::ser::into_writer(value, &mut value_buffer)?;
-    
-            Ok(value_buffer.clone())
-    }
-    
-    pub fn from_cbor<'a, T: 'a>(cbor: &[u8]) -> DynResult<T> 
-        where T: Deserialize<'a> {
-    
-        let value = ciborium::de::from_reader::<T, _>(Cursor::new(cbor))?;
-        Ok(value)
-    }
-    
     pub fn into_json<'a, T: 'a>(value: &T)  -> DynResult<String>
         where T: Serialize + Deserialize<'a> {
             
@@ -92,8 +76,8 @@ pub mod ser {
             Ok(json)
     }
     
-    pub fn from_json<'a, T>(json: &'a str) -> DynResult<T> 
-        where T: Deserialize<'a> {
+    pub fn from_json<T>(json: &str) -> DynResult<T> 
+        where for<'a> T: Deserialize<'a> {
         let value = serde_json::de::from_str::<T>(&json)?;
         
         Ok(value)
